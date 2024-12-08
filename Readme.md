@@ -211,6 +211,7 @@ We'd like to acknowledge the efforts and contributions of the following individu
 -   **[Akash Deep](https://github.com/akashdeep023)** - Full Stack development and Project lead.
 -   **[Ekant Verma](https://github.com/ekantverma)** - Full Stack development.
 -   **[Anjali Kumari](https://github.com/Anjali17aj)** - Full Stack development.
+-   **[Shanedra Singh](https://github.com/shanedraSingh/)** - Full Stack development.
 
 ## **License**
 
