@@ -8,6 +8,12 @@ const registerUser = async (req, res, next) => {
 	if (existingUser) {
 		return res.status(400).json({ message: `User Already Exist` });
 	}
+
+	const validationResult = registerSchema.validate({password});
+	if (validationResult.error){
+		return res.status(400).json({ message: `Error: Password must be 8+ chars, with upper, lower, number, and special (@$!%*?&#)` });
+	}
+
 	password = bcrypt.hashSync(password, 8);
 	const userData = new User({
 		name,
