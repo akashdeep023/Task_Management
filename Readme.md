@@ -200,10 +200,11 @@ Check out the live demo of Task Management here: [Task Management](https://task-
 
 ## **Author**
 
-Akash Deep \
-Email: contact.akashdeep023@gmail.com \
-LinkedIn: https://www.linkedin.com/in/akashdeep023/
+Aniket Sharma \
+Email: aniketsharma.ani04@gmail.com \
+LinkedIn: https://www.linkedin.com/in/aniket-sharma-07ba6617b/
 
+<!--
 ## **Contributors**
 
 We'd like to acknowledge the efforts and contributions of the following individuals:
@@ -217,7 +218,7 @@ We'd like to acknowledge the efforts and contributions of the following individu
 
 This project is licensed under the [MIT License](LICENSE).
 
----
+--->
 
 Thank you for checking out my Task Management project! If you have any feedback or suggestions, I would love to hear from you.
 Feel free to contribute, report issues, or suggest improvements! 😊
