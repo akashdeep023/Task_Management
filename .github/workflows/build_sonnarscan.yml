@@ -22,6 +22,19 @@ jobs:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
+      - name: Configurar Node.js para generar cobertura
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.17.1"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Instalar dependencias para el análisis
+        run: npm ci --prefix backend --ignore-scripts --no-audit --no-fund
+
+      - name: Ejecutar pruebas unitarias y generar LCOV
+        run: npm run test:ci --prefix backend
+
       # SonarCloud debe analizar el backend y leer la cobertura generada por Jest.
       - name: Analizar backend y esperar el quality gate
         id: sonar
