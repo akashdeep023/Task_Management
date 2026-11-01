@@ -10,6 +10,7 @@ let baseUrl;
 
 beforeAll(async () => {
   server = await startServer(0, '127.0.0.1');
+  expect(connectDatabase).toHaveBeenCalledTimes(1);
   if (!server.listening) await once(server, 'listening');
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
@@ -23,7 +24,6 @@ afterAll(async () => {
 });
 
 test('inicia después de conectar la base de datos', () => {
-  expect(connectDatabase).toHaveBeenCalledTimes(1);
   expect(server.listening).toBe(true);
 });
 
