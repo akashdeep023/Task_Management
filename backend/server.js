@@ -49,28 +49,6 @@ const userRouter = require("./routes/user");
 const taskRoute = require("./routes/task");
 const analyticsRoute = require("./routes/analytics");
 
-const mongoUri =
-  process.env.MONGODB_URI ||
-  process.env.MONGO_URL ||
-  process.env.MONGO_PUBLIC_URL;
-
-const mongoDbName = process.env.MONGODB_DB_NAME || "task_management";
-
-async function connectDatabase() {
-  if (!mongoUri) {
-    throw new Error(
-      "MongoDB connection is not configured. Set MONGO_URL or MONGODB_URI."
-    );
-  }
-
-  await mongoose.connect(mongoUri, {
-    dbName: mongoDbName,
-    serverSelectionTimeoutMS: 10000,
-  });
-
-  console.log(`MongoDB connected: ${mongoose.connection.name}`);
-}
-
 // Root route
 app.get("/", (req, res) => {
   res.json({
@@ -113,18 +91,24 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: errorMessage });
 });
 
-async function startServer() {
+async function startServer(port = PORT, host = "0.0.0.0") {
   try {
     await connectDatabase();
 
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server listening on 0.0.0.0:${PORT}`);
+    const server = app.listen(port, host, () => {
+      console.log(`Server listening on ${host}:${server.address().port}`);
       console.log(`Allowed CORS origins: ${allowedOrigins.join(", ")}`);
     });
+    return server;
   } catch (error) {
     console.error("Application startup failed:", error.message);
-    process.exit(1);
+    process.exitCode = 1;
+    throw error;
   }
 }
 
-startServer();
+if (require.main === module) {
+  startServer().catch(() => {});
+}
+
+module.exports = { app, startServer };
