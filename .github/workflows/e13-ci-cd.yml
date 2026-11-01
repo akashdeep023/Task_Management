@@ -63,6 +63,7 @@ jobs:
             -Dsonar.tests=tests
             -Dsonar.exclusions=tests/**,node_modules/**,coverage/**,reports/**
             -Dsonar.javascript.lcov.reportPaths=coverage/unit/lcov.info
+            -Dsonar.coverage.exclusions=scripts/**
             -Dsonar.qualitygate.wait=${{ github.event_name == 'pull_request' || github.ref_name == 'main' }}
             -Dsonar.qualitygate.timeout=300
         env:
