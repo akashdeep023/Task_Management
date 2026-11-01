@@ -122,7 +122,7 @@ jobs:
       - name: Correr Vitest y validar cobertura crítica
         run: npm --prefix frontend-source/frontend run test:ci
 
-      # Cada repositorio mantiene su análisis diferencial para que una promoción no dependa del otro.
+      # Cada repositorio mantiene su análisis diferencial para evitar depender de la configuración de la otra rama.
       - name: Análisis estático diferencial y quality gate (ESLint)
         shell: bash
         run: |
@@ -145,7 +145,7 @@ jobs:
 
           mapfile -t backend_files < <(
             git -C backend-source diff --name-only --diff-filter=ACMRT "origin/$base_ref...HEAD" -- backend |
-              grep -E '^backend/(config|controllers|middlewares|models|routes|scripts|tests)/.*\\.(cjs|js|jsx|mjs)$|^backend/server\\.(cjs|js|mjs)$' || true
+              grep -E '^backend/(config|controllers|middlewares|models|routes|scripts|tests)/.*\.(cjs|js|jsx|mjs)$|^backend/server\.(cjs|js|mjs)$' || true
           )
 
           eslint_bin="frontend-source/frontend/node_modules/.bin/eslint"
@@ -191,8 +191,8 @@ jobs:
         run: |
           set -euo pipefail
           informe="$(curl --fail --silent --show-error --user "${SONAR_TOKEN}:" "https://sonarcloud.io/api/issues/search?componentKeys=${SONAR_PROJECT_KEY}&branch=main&sinceLeakPeriod=true&issueStatuses=OPEN%2CCONFIRMED&ps=500")"
-          printf '%s\\n' "$informe" | jq -r '"Incidencias abiertas en código nuevo: \\(.total)"'
-          printf '%s\\n' "$informe" | jq -r '.issues[] | [.type, .severity, .rule, (.component | sub("^.*:"; "")), (.line // 0 | tostring), .message] | @tsv'
+          printf '%s\n' "$informe" | jq -r '"Incidencias abiertas en código nuevo: \(.total)"'
+          printf '%s\n' "$informe" | jq -r '.issues[] | [.type, .severity, .rule, (.component | sub("^.*:"; "")), (.line // 0 | tostring), .message] | @tsv'
 
       - name: Configurar Node.js para pruebas de API
         uses: actions/setup-node@v4
