@@ -2,7 +2,7 @@ name: E13 CI/CD backend
 
 on:
   push:
-    branches: [featureE13, dev, release, main]
+    branches: [dev, release, main]
   pull_request:
     branches: [dev, release, main]
 
