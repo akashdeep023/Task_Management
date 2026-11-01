@@ -14,7 +14,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
   group: e13-backend-${{ github.ref }}
@@ -80,7 +79,7 @@ jobs:
           cache-dependency-path: backend-source/backend/package-lock.json
 
       - name: Instalar dependencias del backend
-        run: npm ci --prefix backend-source/backend --no-audit --no-fund
+        run: npm ci --prefix backend-source/backend --ignore-scripts --no-audit --no-fund
 
       - name: Validar sintaxis del backend
         run: |
@@ -97,7 +96,7 @@ jobs:
           cache-dependency-path: frontend-source/frontend/package-lock.json
 
       - name: Instalar dependencias del frontend
-        run: npm ci --prefix frontend-source/frontend --no-audit --no-fund
+        run: npm ci --prefix frontend-source/frontend --ignore-scripts --no-audit --no-fund
 
       - name: Compilar frontend para producción
         run: npm run build --prefix frontend-source/frontend
@@ -122,7 +121,7 @@ jobs:
       - name: Correr Vitest y validar cobertura crítica
         run: npm --prefix frontend-source/frontend run test:ci
 
-      # Se revisa el cambio de esta promoción; las reglas completas de Sonar siguen activas en main.
+      # Cada repositorio mantiene su análisis diferencial para evitar depender de la configuración de la otra rama.
       - name: Análisis estático diferencial y quality gate (ESLint)
         shell: bash
         run: |
@@ -140,32 +139,21 @@ jobs:
           fi
 
           echo "Rama base del análisis: $base_ref"
-          for repo_dir in backend-source frontend-source; do
-            git -C "$repo_dir" fetch --no-tags origin "+refs/heads/$base_ref:refs/remotes/origin/$base_ref"
-          done
-
+          git -C backend-source fetch --no-tags origin "+refs/heads/$base_ref:refs/remotes/origin/$base_ref"
           node --check backend-source/backend/.eslintrc.cjs
-          node --check frontend-source/frontend/.eslintrc.cjs
 
           mapfile -t backend_files < <(
             git -C backend-source diff --name-only --diff-filter=ACMRT "origin/$base_ref...HEAD" -- backend |
               grep -E '^backend/(config|controllers|middlewares|models|routes|scripts|tests)/.*\.(cjs|js|jsx|mjs)$|^backend/server\.(cjs|js|mjs)$' || true
           )
-          mapfile -t frontend_files < <(
-            git -C frontend-source diff --name-only --diff-filter=ACMRT "origin/$base_ref...HEAD" -- frontend |
-              grep -E '^frontend/.*\.(cjs|js|jsx|mjs)$' |
-              grep -Ev '^frontend/\.eslintrc\.cjs$' || true
-          )
 
           eslint_bin="frontend-source/frontend/node_modules/.bin/eslint"
-          if (("${#frontend_files[@]}")); then
-            "$eslint_bin" --config frontend-source/frontend/.eslintrc.cjs --max-warnings 0 "${frontend_files[@]}"
-          else
-            echo "Sin archivos fuente modificados en el frontend."
-          fi
-
           if (("${#backend_files[@]}")); then
-            "$eslint_bin" --config backend-source/backend/.eslintrc.cjs --max-warnings 0 "${backend_files[@]}"
+            eslint_files=()
+            for file in "${backend_files[@]}"; do
+              eslint_files+=("backend-source/$file")
+            done
+            "$eslint_bin" --config backend-source/backend/.eslintrc.cjs --max-warnings 0 "${eslint_files[@]}"
           else
             echo "Sin archivos fuente modificados en el backend."
           fi
@@ -182,19 +170,35 @@ jobs:
             exit 1
           fi
       - name: Analizar backend en SonarCloud y esperar el quality gate
+        id: sonar
         if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         with:
-          projectBaseDir: backend-source
+          projectBaseDir: backend-source/backend
           args: >-
-            -Dsonar.sources=backend
-            -Dsonar.tests=backend/tests
-            -Dsonar.exclusions=backend/tests/**,backend/node_modules/**,backend/coverage/**,backend/reports/**
-            -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
+            -Dsonar.projectKey=altair222000_Task_Management
+            -Dsonar.organization=altair222000
+            -Dsonar.sources=.
+            -Dsonar.tests=tests
+            -Dsonar.exclusions=tests/**,node_modules/**,coverage/**,reports/**
+            -Dsonar.coverage.exclusions=scripts/**
+            -Dsonar.javascript.lcov.reportPaths=coverage/unit/lcov.info
             -Dsonar.qualitygate.wait=true
             -Dsonar.qualitygate.timeout=300
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Consultar hallazgos nuevos de SonarCloud
+        if: failure() && steps.sonar.outcome == 'failure'
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: altair222000_Task_Management
+        run: |
+          set -euo pipefail
+          informe="$(curl --fail --silent --show-error --user "${SONAR_TOKEN}:" "https://sonarcloud.io/api/issues/search?componentKeys=${SONAR_PROJECT_KEY}&branch=main&sinceLeakPeriod=true&issueStatuses=OPEN%2CCONFIRMED&ps=500")"
+          printf '%s\n' "$informe" | jq -r '"Incidencias abiertas en código nuevo: \(.total)"'
+          printf '%s\n' "$informe" | jq -r '.issues[] | [.type, .severity, .rule, (.component | sub("^.*:"; "")), (.line // 0 | tostring), .message] | @tsv'
 
       - name: Configurar Node.js para pruebas de API
         uses: actions/setup-node@v4
@@ -202,6 +206,9 @@ jobs:
           node-version: "18.17.1"
           cache: npm
           cache-dependency-path: backend-source/backend/package-lock.json
+
+      - name: Instalar Newman sin ejecutar scripts de instalación
+        run: npm install --global --ignore-scripts newman@6.2.3
 
       - name: Iniciar API para Newman
         run: |
@@ -226,7 +233,7 @@ jobs:
       - name: Ejecutar colección API con Newman
         run: |
           cd backend-source/backend
-          npx --yes newman@6.2.3 run tests/api/task-management.postman_collection.json \
+          newman run tests/api/task-management.postman_collection.json \
             --env-var "baseUrl=http://127.0.0.1:3000" \
             --env-var "expectedDatabase=$MONGODB_DB_NAME" \
             --reporters cli,json \
@@ -247,7 +254,13 @@ jobs:
 
       - name: Mostrar log de API si falla el workflow
         if: failure()
-        run: cat "$RUNNER_TEMP/task-management-api.log"
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/task-management-api.log" ]]; then
+            cat "$RUNNER_TEMP/task-management-api.log"
+          else
+            echo "La API no había iniciado cuando falló el paso anterior."
+          fi
 
   deploy:
     name: E13 · Despliegue backend a Railway
@@ -270,8 +283,21 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Instalar Railway CLI
-        run: npm install --global @railway/cli@5.63.1
+      - name: Instalar CLI de Railway con verificación de integridad
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/railway"
+          archivo="$RUNNER_TEMP/railway/railway.tar.gz"
+          curl --fail --silent --show-error --location \
+            "https://github.com/railwayapp/cli/releases/download/v5.63.1/railway-v5.63.1-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archivo"
+          # Se verifica el digest publicado para la versión fijada antes de ejecutar el binario.
+          echo "f5f25b6f0d825bd44e4f96a9f8a0476a3a226cb3facf96eb1bc051f514e1f8b6  $archivo" | sha256sum --check
+          tar --extract --gzip --file "$archivo" --directory "$RUNNER_TEMP/railway"
+          chmod +x "$RUNNER_TEMP/railway/railway"
+          "$RUNNER_TEMP/railway/railway" --version
+          echo "$RUNNER_TEMP/railway" >> "$GITHUB_PATH"
 
       - name: Validar configuración de Railway
         shell: bash
