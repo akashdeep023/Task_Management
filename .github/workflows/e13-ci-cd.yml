@@ -149,7 +149,11 @@ jobs:
 
           eslint_bin="frontend-source/frontend/node_modules/.bin/eslint"
           if (("${#backend_files[@]}")); then
-            "$eslint_bin" --config backend-source/backend/.eslintrc.cjs --max-warnings 0 "${backend_files[@]}"
+            eslint_files=()
+            for file in "${backend_files[@]}"; do
+              eslint_files+=("backend-source/$file")
+            done
+            "$eslint_bin" --config backend-source/backend/.eslintrc.cjs --max-warnings 0 "${eslint_files[@]}"
           else
             echo "Sin archivos fuente modificados en el backend."
           fi
@@ -249,7 +253,13 @@ jobs:
 
       - name: Mostrar log de API si falla el workflow
         if: failure()
-        run: cat "$RUNNER_TEMP/task-management-api.log"
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/task-management-api.log" ]]; then
+            cat "$RUNNER_TEMP/task-management-api.log"
+          else
+            echo "La API no había iniciado cuando falló el paso anterior."
+          fi
 
   deploy:
     name: E13 · Despliegue backend a Railway
