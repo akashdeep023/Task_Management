@@ -1,0 +1,48 @@
+name: Backend unit tests
+on:
+  push:
+    branches: [develop]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  backend-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18.17.1'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Reproduce baseline, run unit tests and enforce coverage improvement
+        run: npm run test:ci
+      - name: Add critical-module coverage to job summary
+        if: always()
+        run: |
+          if [ -f reports/cobertura.md ]; then
+            cat reports/cobertura.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload test results and coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-e10-evidence
+          path: |
+            backend/coverage/
+            backend/reports/
+            backend/coverage-baseline.json
+            backend/coverage-critical.json
+          if-no-files-found: error
+          retention-days: 30

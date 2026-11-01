@@ -7,13 +7,36 @@ const mongoose = require("mongoose");
 const connectDatabase = require("./config/database");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
+
+const DEFAULT_FRONTEND_URL =
+  "https://taskmanagementfrontend-production-52aa.up.railway.app";
+
+const configuredOrigins = [
+  DEFAULT_FRONTEND_URL,
+  "http://localhost:5173",
+  ...(process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+];
+
+const allowedOrigins = [...new Set(configuredOrigins)];
 
 const corsOptions = {
-  origin: process.env.FRONTEND_URL,
-  methods: ["GET", "POST", "DELETE", "PUT"],
+  origin(origin, callback) {
+    // Requests without Origin (health checks, curl, server-to-server) are allowed.
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.warn(`CORS blocked origin: ${origin}`);
+    return callback(new Error("Origin not allowed by CORS"));
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
+  optionsSuccessStatus: 204,
 };
 
 app.use(cors(corsOptions));
@@ -26,22 +49,49 @@ const userRouter = require("./routes/user");
 const taskRoute = require("./routes/task");
 const analyticsRoute = require("./routes/analytics");
 
+const mongoUri =
+  process.env.MONGODB_URI ||
+  process.env.MONGO_URL ||
+  process.env.MONGO_PUBLIC_URL;
+
+const mongoDbName = process.env.MONGODB_DB_NAME || "task_management";
+
+async function connectDatabase() {
+  if (!mongoUri) {
+    throw new Error(
+      "MongoDB connection is not configured. Set MONGO_URL or MONGODB_URI."
+    );
+  }
+
+  await mongoose.connect(mongoUri, {
+    dbName: mongoDbName,
+    serverSelectionTimeoutMS: 10000,
+  });
+
+  console.log(`MongoDB connected: ${mongoose.connection.name}`);
+}
+
 // Root route
 app.get("/", (req, res) => {
   res.json({
     message: "Welcome to Task_Management!",
-    frontend_url: process.env.FRONTEND_URL,
-    database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    database:
+      mongoose.connection.readyState === 1
+        ? mongoose.connection.name
+        : "disconnected",
+    frontend_url: process.env.FRONTEND_URL || DEFAULT_FRONTEND_URL,
   });
 });
 
-// Health check for Railway
+// Railway health check
 app.get("/health", (req, res) => {
-  const connected = mongoose.connection.readyState === 1;
+  const databaseConnected = mongoose.connection.readyState === 1;
 
-  res.status(connected ? 200 : 503).json({
-    status: connected ? "ok" : "error",
-    database: connected ? mongoose.connection.name : "disconnected",
+  res.status(databaseConnected ? 200 : 503).json({
+    status: databaseConnected ? "ok" : "error",
+    database: databaseConnected
+      ? mongoose.connection.name
+      : "disconnected",
   });
 });
 
@@ -58,6 +108,7 @@ app.all("*", (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
+  console.error(err);
   const errorMessage = err.message || "Something Went Wrong!";
   res.status(500).json({ message: errorMessage });
 });
@@ -66,11 +117,12 @@ async function startServer() {
   try {
     await connectDatabase();
 
-    app.listen(PORT, () => {
-      console.log(`Server listening on ${PORT}`);
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server listening on 0.0.0.0:${PORT}`);
+      console.log(`Allowed CORS origins: ${allowedOrigins.join(", ")}`);
     });
   } catch (error) {
-    console.error("Unable to start application:", error.message);
+    console.error("Application startup failed:", error.message);
     process.exit(1);
   }
 }

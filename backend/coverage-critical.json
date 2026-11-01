@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "5164a4607f952c4751991e74177d7b52c96d8064",
+  "baselineOriginalTests": 0,
+  "metric": "lines",
+  "minimumDeltaPoints": 20,
+  "minimumTests": 15,
+  "modules": {
+    "Autenticación y control de acceso": [
+      "controllers/auth.js",
+      "config/jwtProvider.js",
+      "middlewares/authorization.js",
+      "middlewares/wrapAsync.js"
+    ],
+    "Gestión de tareas": [
+      "controllers/task.js",
+      "models/task.js"
+    ],
+    "Administración del estado de las tareas": [
+      "controllers/task.js",
+      "models/task.js"
+    ],
+    "Asignación de miembros": [
+      "controllers/user.js",
+      "models/user.js"
+    ],
+    "Visor de tareas compartidas": [
+      "controllers/task.js"
+    ]
+  }
+}

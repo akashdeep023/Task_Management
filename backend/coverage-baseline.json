@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "5164a4607f952c4751991e74177d7b52c96d8064",
+  "originalTests": 0,
+  "metric": "lines",
+  "method": "Retrospective instrumentation of source archived from the pinned Git commit; probe is not an application test.",
+  "recordedAt": "2026-10-06T00:45:40.497Z",
+  "files": {
+    "config/jwtProvider.js": {
+      "total": 9,
+      "covered": 0,
+      "pct": 0,
+      "sha256": "1a06bb4817a8d1ffe394030ddc9c55a79b83a1ddeed5868da3366f0d2d19f154"
+    },
+    "controllers/auth.js": {
+      "total": 25,
+      "covered": 0,
+      "pct": 0,
+      "sha256": "315b705d72a8e475a9dc247e7a91a1faeb7d71730a54edfee6eec41434b21676"
+    },
+    "controllers/task.js": {
+      "total": 37,
+      "covered": 0,
+      "pct": 0,
+      "sha256": "70da93e8d4eec0fa9166bfca87cae1ea02dfd30884dc414153ce46234e37ae3c"
+    },
+    "controllers/user.js": {
+      "total": 29,
+      "covered": 0,
+      "pct": 0,
+      "sha256": "a289671e360979d0733e0e68b66455a5552c187c4572b096244de9b17b14cef2"
+    },
+    "middlewares/authorization.js": {
+      "total": 13,
+      "covered": 0,
+      "pct": 0,
+      "sha256": "72af942cbc6df3a6149e1b7abbcd79f75441f0a1e1e372425f4d70571394d7eb"
+    },
+    "middlewares/wrapAsync.js": {
+      "total": 3,
+      "covered": 0,
+      "pct": 0,
+      "sha256": "9bf3523f0cecd84dcd171117ece475c583326d593708a1b77d564af80fbf28cf"
+    },
+    "models/task.js": {
+      "total": 4,
+      "covered": 0,
+      "pct": 0,
+      "sha256": "f0b03800637811b0036b8ae4102a2297a70fb5eda08803c3e446df0fdbd591c9"
+    },
+    "models/user.js": {
+      "total": 4,
+      "covered": 0,
+      "pct": 0,
+      "sha256": "76023e04be91222f7f5b69fe14502f35b2ddd7cc45db615d97913988bed50e54"
+    }
+  }
+}

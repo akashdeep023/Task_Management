@@ -1,0 +1,86 @@
+name: E11 API tests
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  api-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PORT: "3000"
+      MONGODB_URI: mongodb://127.0.0.1:27017/task_management_e11
+      MONGODB_DB_NAME: task_management_e11
+      JWT_SECRET: e11-ci-only-secret-do-not-use-in-production
+      TZ: UTC
+    steps:
+      - name: Obtener el repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.17.1"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Instalar dependencias del backend
+        run: npm ci --no-audit --no-fund
+
+      - name: Iniciar API para las pruebas
+        run: |
+          npm start > /tmp/task-management-api.log 2>&1 &
+          echo $! > /tmp/task-management-api.pid
+
+      - name: Esperar conexión de la API y MongoDB
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health > /tmp/task-management-health.json; then
+              cat /tmp/task-management-health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/task-management-api.log
+          exit 1
+
+      - name: Ejecutar colección E11 con Newman
+        run: |
+          mkdir -p reports
+          npx --yes newman@6.2.3 run tests/api/task-management.postman_collection.json \
+            --env-var "baseUrl=http://127.0.0.1:3000" \
+            --reporters cli,json \
+            --reporter-json-export reports/api-tests.json
+
+      - name: Publicar reporte Newman
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e11-api-test-report
+          path: backend/reports/api-tests.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Mostrar log del servidor si hubo un fallo
+        if: failure()
+        run: cat /tmp/task-management-api.log
