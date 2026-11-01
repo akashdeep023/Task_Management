@@ -7,7 +7,7 @@ El pipeline E13 valida en orden el frontend y el backend, y despliega el servici
 1. Validación de sintaxis del backend y compilación de producción del frontend con Vite.
 2. Pruebas unitarias del backend con Jest y del frontend con Vitest.
 3. Análisis estático diferencial con ESLint sobre los archivos JavaScript modificados frente a la rama base, con cero errores y cero advertencias. En `main` y en PRs dirigidos a `main`, también se ejecuta el análisis completo de SonarCloud y se espera su quality gate.
-4. Arranque de MongoDB temporal, inicio de la API y ejecución de la colección Postman con Newman.
+4. Arranque de MongoDB temporal, inicio de la API y ejecución de la colección Postman con Newman. El pipeline pasa a Newman el nombre de la base temporal para que la aserción de salud coincida con la configuración de esta ejecución.
 5. Despliegue del servicio que cambió a Railway y verificación HTTP posterior.
 
 Las ejecuciones de `featureE13` y de pull requests validan las etapas de CI y omiten el despliegue. El despliegue se ejecuta solamente después de un `push` a `dev`, `release` o `main`.

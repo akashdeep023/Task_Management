@@ -228,6 +228,7 @@ jobs:
           cd backend-source/backend
           npx --yes newman@6.2.3 run tests/api/task-management.postman_collection.json \
             --env-var "baseUrl=http://127.0.0.1:3000" \
+            --env-var "expectedDatabase=$MONGODB_DB_NAME" \
             --reporters cli,json \
             --reporter-json-export reports/api-tests.json
 
