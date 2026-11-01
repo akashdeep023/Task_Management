@@ -7,13 +7,16 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const current = process.cwd();
 const scope = JSON.parse(fs.readFileSync('coverage-critical.json', 'utf8'));
-const repository = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+// Se usan rutas absolutas para que la ejecución no dependa de la variable PATH.
+const gitExecutable = '/usr/bin/git';
+const tarExecutable = '/usr/bin/tar';
+const repository = execFileSync(gitExecutable, ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
 const project = path.relative(repository, current);
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'taskmanagement-baseline-'));
 const archived = path.join(temp, project);
 try {
-  const archive = execFileSync('git', ['archive', scope.baselineCommit, project], { cwd: repository, maxBuffer: 32 * 1024 * 1024 });
-  execFileSync('tar', ['-xf', '-', '-C', temp], { input: archive });
+  const archive = execFileSync(gitExecutable, ['archive', scope.baselineCommit, project], { cwd: repository, maxBuffer: 32 * 1024 * 1024 });
+  execFileSync(tarExecutable, ['-xf', '-', '-C', temp], { input: archive });
   fs.symlinkSync(path.join(current, 'node_modules'), path.join(archived, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   fs.mkdirSync(path.join(archived, 'tests'), { recursive: true });
   fs.cpSync('tests/baseline', path.join(archived, 'tests/baseline'), { recursive: true });
@@ -27,7 +30,7 @@ try {
   fs.mkdirSync('coverage', { recursive: true });
   fs.rmSync('coverage/baseline', { force: true, recursive: true });
   fs.cpSync(path.join(archived, 'coverage/baseline'), 'coverage/baseline', { recursive: true });
-  const files = [...new Set(Object.values(scope.modules).flat())].sort();
+  const files = [...new Set(Object.values(scope.modules).flat())].sort((left, right) => left.localeCompare(right));
   const hashes = Object.fromEntries(files.map(file => [file, crypto.createHash('sha256').update(fs.readFileSync(path.join(archived, file))).digest('hex')]));
   fs.mkdirSync('reports', { recursive: true });
   fs.writeFileSync('reports/baseline-source-hashes.json', JSON.stringify({ baselineCommit: scope.baselineCommit, files: hashes }, null, 2) + '\n');
