@@ -49,7 +49,8 @@ jobs:
             -Dsonar.exclusions=tests/**,node_modules/**,coverage/**,reports/**
             -Dsonar.coverage.exclusions=scripts/**
             -Dsonar.javascript.lcov.reportPaths=coverage/unit/lcov.info
-            -Dsonar.qualitygate.wait=true
+            # La organización permite consultar el gate remoto en PR y en main.
+            -Dsonar.qualitygate.wait=${{ github.event_name == 'pull_request' || github.ref_name == 'main' }}
             -Dsonar.qualitygate.timeout=300
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
