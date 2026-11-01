@@ -7,15 +7,16 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const current = process.cwd();
 const scope = JSON.parse(fs.readFileSync('coverage-critical.json', 'utf8'));
-// git y tar se resuelven únicamente desde directorios del sistema no modificables.
-const commandEnv = { PATH: '/usr/bin:/bin' };
-const repository = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', env: commandEnv }).trim();
+// Se usan rutas absolutas para que la ejecución no dependa de la variable PATH.
+const gitExecutable = '/usr/bin/git';
+const tarExecutable = '/usr/bin/tar';
+const repository = execFileSync(gitExecutable, ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
 const project = path.relative(repository, current);
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'taskmanagement-baseline-'));
 const archived = path.join(temp, project);
 try {
-  const archive = execFileSync('git', ['archive', scope.baselineCommit, project], { cwd: repository, maxBuffer: 32 * 1024 * 1024, env: commandEnv });
-  execFileSync('tar', ['-xf', '-', '-C', temp], { input: archive, env: commandEnv });
+  const archive = execFileSync(gitExecutable, ['archive', scope.baselineCommit, project], { cwd: repository, maxBuffer: 32 * 1024 * 1024 });
+  execFileSync(tarExecutable, ['-xf', '-', '-C', temp], { input: archive });
   fs.symlinkSync(path.join(current, 'node_modules'), path.join(archived, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   fs.mkdirSync(path.join(archived, 'tests'), { recursive: true });
   fs.cpSync('tests/baseline', path.join(archived, 'tests/baseline'), { recursive: true });
