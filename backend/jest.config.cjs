@@ -4,8 +4,11 @@ module.exports = {
   setupFiles: ['<rootDir>/tests/setup.cjs'],
   clearMocks: true,
   collectCoverageFrom: [
-    'config/jwtProvider.js', 'controllers/*.js',
-    'middlewares/*.js', 'models/*.js',
+    'config/*.js',
+    'controllers/*.js',
+    'middlewares/*.js',
+    'models/*.js',
+    'server.js',
   ],
   coverageDirectory: 'coverage/unit',
   coverageReporters: ['text', 'html', 'lcov', 'json', 'json-summary'],
