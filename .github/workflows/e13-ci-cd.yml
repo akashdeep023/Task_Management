@@ -122,7 +122,7 @@ jobs:
       - name: Correr Vitest y validar cobertura crítica
         run: npm --prefix frontend-source/frontend run test:ci
 
-      # Se revisa el cambio de esta promoción; las reglas completas de Sonar siguen activas en main.
+      # Cada repositorio mantiene su análisis diferencial para que una promoción no dependa del otro.
       - name: Análisis estático diferencial y quality gate (ESLint)
         shell: bash
         run: |
@@ -140,30 +140,15 @@ jobs:
           fi
 
           echo "Rama base del análisis: $base_ref"
-          for repo_dir in backend-source frontend-source; do
-            git -C "$repo_dir" fetch --no-tags origin "+refs/heads/$base_ref:refs/remotes/origin/$base_ref"
-          done
-
+          git -C backend-source fetch --no-tags origin "+refs/heads/$base_ref:refs/remotes/origin/$base_ref"
           node --check backend-source/backend/.eslintrc.cjs
-          node --check frontend-source/frontend/.eslintrc.cjs
 
           mapfile -t backend_files < <(
             git -C backend-source diff --name-only --diff-filter=ACMRT "origin/$base_ref...HEAD" -- backend |
-              grep -E '^backend/(config|controllers|middlewares|models|routes|scripts|tests)/.*\.(cjs|js|jsx|mjs)$|^backend/server\.(cjs|js|mjs)$' || true
-          )
-          mapfile -t frontend_files < <(
-            git -C frontend-source diff --name-only --diff-filter=ACMRT "origin/$base_ref...HEAD" -- frontend |
-              grep -E '^frontend/.*\.(cjs|js|jsx|mjs)$' |
-              grep -Ev '^frontend/\.eslintrc\.cjs$' || true
+              grep -E '^backend/(config|controllers|middlewares|models|routes|scripts|tests)/.*\\.(cjs|js|jsx|mjs)$|^backend/server\\.(cjs|js|mjs)$' || true
           )
 
           eslint_bin="frontend-source/frontend/node_modules/.bin/eslint"
-          if (("${#frontend_files[@]}")); then
-            "$eslint_bin" --config frontend-source/frontend/.eslintrc.cjs --max-warnings 0 "${frontend_files[@]}"
-          else
-            echo "Sin archivos fuente modificados en el frontend."
-          fi
-
           if (("${#backend_files[@]}")); then
             "$eslint_bin" --config backend-source/backend/.eslintrc.cjs --max-warnings 0 "${backend_files[@]}"
           else
@@ -182,6 +167,7 @@ jobs:
             exit 1
           fi
       - name: Analizar backend en SonarCloud y esperar el quality gate
+        id: sonar
         if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         with:
@@ -190,11 +176,23 @@ jobs:
             -Dsonar.sources=backend
             -Dsonar.tests=backend/tests
             -Dsonar.exclusions=backend/tests/**,backend/node_modules/**,backend/coverage/**,backend/reports/**
-            -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
+            -Dsonar.javascript.lcov.reportPaths=backend/coverage/unit/lcov.info
             -Dsonar.qualitygate.wait=true
             -Dsonar.qualitygate.timeout=300
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Consultar hallazgos nuevos de SonarCloud
+        if: github.ref_name == 'featureE13' || (failure() && steps.sonar.outcome == 'failure')
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: altair222000_Task_Management
+        run: |
+          set -euo pipefail
+          informe="$(curl --fail --silent --show-error --user "${SONAR_TOKEN}:" "https://sonarcloud.io/api/issues/search?componentKeys=${SONAR_PROJECT_KEY}&branch=main&sinceLeakPeriod=true&issueStatuses=OPEN%2CCONFIRMED&ps=500")"
+          printf '%s\\n' "$informe" | jq -r '"Incidencias abiertas en código nuevo: \\(.total)"'
+          printf '%s\\n' "$informe" | jq -r '.issues[] | [.type, .severity, .rule, (.component | sub("^.*:"; "")), (.line // 0 | tostring), .message] | @tsv'
 
       - name: Configurar Node.js para pruebas de API
         uses: actions/setup-node@v4
