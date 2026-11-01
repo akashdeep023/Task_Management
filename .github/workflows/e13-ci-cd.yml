@@ -187,3 +187,65 @@ jobs:
       - name: Mostrar log de API si falla el workflow
         if: failure()
         run: cat "$RUNNER_TEMP/task-management-api.log"
+
+  deploy:
+    name: E13 · Despliegue backend a Railway
+    needs: pipeline
+    if: github.event_name == 'push' && contains(fromJSON('["dev","release","main"]'), github.ref_name)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ github.ref_name == 'dev' && 'development' || github.ref_name == 'release' && 'qa' || 'production' }}
+    steps:
+      - name: Descargar la versión promovida
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          fetch-depth: 1
+
+      - name: Configurar Node.js para Railway CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar Railway CLI
+        run: npm install --global @railway/cli@5.63.1
+
+      - name: Validar configuración de Railway
+        shell: bash
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          for variable in RAILWAY_TOKEN RAILWAY_PROJECT_ID RAILWAY_ENVIRONMENT_ID RAILWAY_SERVICE_ID RAILWAY_HEALTH_URL; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing ${variable} in this repository's GitHub Environment."
+              exit 1
+            fi
+          done
+
+      - name: Desplegar backend a Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+        run: railway up ./source/backend --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$RAILWAY_ENVIRONMENT_ID" --service "$RAILWAY_SERVICE_ID"
+
+      - name: Verificar API en Railway
+        env:
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+        run: |
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error --max-time 20 "${RAILWAY_HEALTH_URL%/}/health"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The backend health check did not return HTTP 200."
+          exit 1
