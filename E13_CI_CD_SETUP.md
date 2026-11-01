@@ -6,7 +6,7 @@ El pipeline E13 valida en orden el frontend y el backend, y despliega el servici
 
 1. Validación de sintaxis del backend y compilación de producción del frontend con Vite.
 2. Pruebas unitarias del backend con Jest y del frontend con Vitest.
-3. Análisis del backend en SonarCloud y espera del resultado del quality gate. Si el gate falla, el workflow termina en error.
+3. Análisis estático de ambos proyectos con ESLint y quality gate local: cero errores y cero advertencias. En `main` y en PRs dirigidos a `main`, también se ejecuta el análisis de SonarCloud y se espera su quality gate.
 4. Arranque de MongoDB temporal, inicio de la API y ejecución de la colección Postman con Newman.
 5. Despliegue del servicio que cambió a Railway y verificación HTTP posterior.
 
@@ -35,13 +35,13 @@ Configurar los siguientes valores en **cada repositorio** y en cada ambiente de 
 | Variable en backend | `RAILWAY_HEALTH_URL` | URL base de la API; el pipeline consulta `/health`. |
 | Variable en frontend | `RAILWAY_SMOKE_URL` | URL base del frontend, sin `/login`; el pipeline agrega esa ruta. |
 
-Además, agregar `SONAR_TOKEN` como secreto de Actions en **ambos repositorios** (o como secreto de organización disponible para ambos). El análisis usa el proyecto `altair222000_Task_Management` definido en `sonar-project.properties` del backend.
+Agregar `SONAR_TOKEN` como secreto de Actions a nivel de **repositorio** en ambos repositorios (o como secreto de organización disponible para ambos). Se usa cuando SonarCloud corre en `main` o en un PR dirigido a `main`. El análisis usa el proyecto `altair222000_Task_Management` definido en `sonar-project.properties` del backend.
 
 ### Requisito del plan de SonarCloud
 
-La organización de SonarCloud asociada a este proyecto actualmente rechaza la consulta del quality gate en ramas distintas de `main`. El plan Free permite análisis de la rama principal y pull requests cuyo destino sea la rama principal; el análisis de otras ramas requiere Team/Enterprise o un plan OSS habilitado para proyectos de código abierto. Como estos repositorios usan las ramas `featureE13`, `dev` y `release`, se debe habilitar un plan con análisis de ramas antes de promover cambios por ese flujo.
+La organización de SonarCloud asociada a este proyecto rechaza el quality gate remoto en ramas distintas de `main`. Para que las ramas de trabajo no se queden bloqueadas por ese límite, el workflow ejecuta ESLint en backend y frontend con cero errores y cero advertencias como quality gate local. SonarCloud se ejecuta en `main` y en PRs cuyo destino es `main`, donde el plan actual permite consultar el gate.
 
-El workflow conserva el control estricto: si SonarCloud no puede entregar el quality gate, no continúa a las pruebas API ni al despliegue. No desactivar `sonar.qualitygate.wait` para hacer pasar una rama sin gate.
+Si más adelante se habilita un plan de SonarCloud con análisis de ramas, se puede ampliar la condición del paso SonarCloud para incluir `featureE13`, `dev` y `release`. El resultado local de ESLint no se presenta como un análisis de SonarCloud.
 
 ### URLs de producción
 

@@ -122,7 +122,20 @@ jobs:
       - name: Correr Vitest y validar cobertura crítica
         run: npm --prefix frontend-source/frontend run test:ci
 
-      - name: Validar secreto de SonarCloud
+      - name: Análisis estático local y quality gate (ESLint)
+        run: |
+          npm run lint --prefix frontend-source/frontend
+          frontend-source/frontend/node_modules/.bin/eslint \
+            --config backend-source/backend/.eslintrc.cjs \
+            --ext .js,.cjs \
+            --ignore-pattern 'backend-source/backend/coverage/**' \
+            --ignore-pattern 'backend-source/backend/reports/**' \
+            --max-warnings 0 \
+            backend-source/backend
+
+      # En el plan actual de SonarCloud, el quality gate remoto está disponible para main.
+      - name: Validar secreto de SonarCloud (main o PR a main)
+        if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
         shell: bash
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -131,7 +144,8 @@ jobs:
             echo "::error::Falta SONAR_TOKEN en Settings > Secrets and variables > Actions de este repositorio."
             exit 1
           fi
-      - name: Analizar backend y esperar el quality gate
+      - name: Analizar backend en SonarCloud y esperar el quality gate
+        if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         with:
           projectBaseDir: backend-source
