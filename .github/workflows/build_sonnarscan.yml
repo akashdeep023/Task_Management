@@ -22,7 +22,57 @@ jobs:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
-      - name: SonarQube Scan
+      - name: Configurar Node.js para generar cobertura
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.17.1"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Instalar dependencias para el análisis
+        run: npm ci --prefix backend --ignore-scripts --no-audit --no-fund
+
+      - name: Ejecutar pruebas unitarias y generar LCOV
+        run: npm run test:ci --prefix backend
+
+      # SonarCloud debe analizar el backend y leer la cobertura generada por Jest.
+      - name: Analizar backend y esperar el quality gate
+        id: sonar
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        with:
+          projectBaseDir: backend
+          args: >-
+            -Dsonar.projectKey=altair222000_Task_Management
+            -Dsonar.organization=altair222000
+            -Dsonar.sources=.
+            -Dsonar.tests=tests
+            -Dsonar.exclusions=tests/**,node_modules/**,coverage/**,reports/**
+            -Dsonar.coverage.exclusions=scripts/**
+            -Dsonar.javascript.lcov.reportPaths=coverage/unit/lcov.info
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Consultar incidencias nuevas si falla el quality gate
+        if: failure() && steps.sonar.outcome == 'failure'
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: altair222000_Task_Management
+          SONAR_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          SONAR_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo "::error::Falta SONAR_TOKEN en los secretos de Actions."
+            exit 1
+          fi
+          if [[ -n "$SONAR_PULL_REQUEST" ]]; then
+            alcance="pullRequest=$SONAR_PULL_REQUEST"
+          else
+            alcance="branch=$SONAR_BRANCH"
+          fi
+          informe="$(curl --fail --silent --show-error --user "${SONAR_TOKEN}:" "https://sonarcloud.io/api/issues/search?componentKeys=${SONAR_PROJECT_KEY}&${alcance}&sinceLeakPeriod=true&issueStatuses=OPEN%2CCONFIRMED&ps=500")"
+          printf '%s\n' "$informe" | jq -r '"Incidencias abiertas en código nuevo: (.total)"'
+          printf '%s\n' "$informe" | jq -r '.issues[] | [.type, .severity, .rule, (.component | sub("^.*:"; "")), (.line // 0 | tostring), .message] | @tsv'

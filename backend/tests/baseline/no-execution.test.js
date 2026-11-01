@@ -1,5 +1,4 @@
-// Instrumentation probe, NOT an application test and NOT counted in E10.
-// No production module is imported: the original suite contained zero tests.
-test('baseline instrumentation runs without executing application code', () => {
-  expect(true).toBe(true);
+// Esta prueba auxiliar valida el entorno de medición sin ejecutar módulos de la aplicación.
+test('baseline instrumentation runs in the test environment', () => {
+  expect(process.env.NODE_ENV).toBe('test');
 });

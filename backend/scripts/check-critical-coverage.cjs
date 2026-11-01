@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const scope = JSON.parse(fs.readFileSync('coverage-critical.json', 'utf8'));
-const files = [...new Set(Object.values(scope.modules).flat())].sort();
+const files = [...new Set(Object.values(scope.modules).flat())].sort((left, right) => left.localeCompare(right));
 const percent = (covered, total) => total ? covered * 100 / total : 0;
 const round = n => Number(n.toFixed(2));
 const baselineHashes = JSON.parse(fs.readFileSync('reports/baseline-source-hashes.json', 'utf8'));
@@ -44,7 +44,7 @@ if (process.argv.includes('--record-baseline')) {
 }
 const baseline = JSON.parse(fs.readFileSync('coverage-baseline.json', 'utf8'));
 if (baseline.baselineCommit !== scope.baselineCommit || baseline.metric !== 'lines' ||
-    JSON.stringify(Object.keys(baseline.files).sort()) !== JSON.stringify(files)) throw new Error('Baseline and scope do not match.');
+    JSON.stringify(Object.keys(baseline.files).sort((left, right) => left.localeCompare(right))) !== JSON.stringify(files)) throw new Error('Baseline and scope do not match.');
 if (process.argv.includes('--verify-baseline')) {
   const measured = readReport('coverage/baseline');
   for (const file of files) {
