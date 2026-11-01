@@ -1,0 +1,189 @@
+name: E13 CI/CD backend
+run-name: E13 pipeline (${{ github.ref_name }})
+
+on:
+  push:
+    branches:
+      - featureE13
+      - dev
+      - release
+      - main
+  pull_request:
+    branches: [dev, release, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: e13-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pipeline:
+    name: E13 · Build, pruebas, quality gate y API
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TZ: UTC
+      PORT: "3000"
+      MONGODB_URI: mongodb://127.0.0.1:27017/task_management_e13
+      MONGODB_DB_NAME: task_management_e13
+      JWT_SECRET: e13-ci-only-secret-do-not-use-in-production
+    steps:
+      - name: Resolver rama del otro repositorio
+        id: paired
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            if [ "$GITHUB_HEAD_REF" = "featureE13" ]; then
+              paired_ref="featureE13"
+            else
+              paired_ref="$GITHUB_BASE_REF"
+            fi
+          else
+            paired_ref="$GITHUB_REF_NAME"
+          fi
+          echo "ref=$paired_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Descargar repositorio actual
+        uses: actions/checkout@v4
+        with:
+          path: backend-source
+          fetch-depth: 0
+
+      - name: Descargar repositorio complementario
+        uses: actions/checkout@v4
+        with:
+          repository: altair222000/Task_Management_frontend
+          ref: ${{ steps.paired.outputs.ref }}
+          token: ${{ github.token }}
+          path: frontend-source
+          fetch-depth: 0
+
+      - name: Configurar Node.js del backend
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.17.1"
+          cache: npm
+          cache-dependency-path: backend-source/backend/package-lock.json
+
+      - name: Instalar dependencias del backend
+        run: npm ci --prefix backend-source/backend --no-audit --no-fund
+
+      - name: Validar sintaxis del backend
+        run: |
+          find backend-source/backend \
+            -path '*/node_modules' -prune -o \
+            -type f \( -name '*.js' -o -name '*.cjs' \) -print0 \
+            | xargs -0 -n1 node --check
+
+      - name: Configurar Node.js del frontend
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend-source/frontend/package-lock.json
+
+      - name: Instalar dependencias del frontend
+        run: npm ci --prefix frontend-source/frontend --no-audit --no-fund
+
+      - name: Compilar frontend para producción
+        run: npm run build --prefix frontend-source/frontend
+
+      - name: Ejecutar pruebas unitarias del backend
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.17.1"
+          cache: npm
+          cache-dependency-path: backend-source/backend/package-lock.json
+
+      - name: Correr Jest y validar cobertura crítica
+        run: npm --prefix backend-source/backend run test:ci
+
+      - name: Configurar Node.js para pruebas del frontend
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend-source/frontend/package-lock.json
+
+      - name: Correr Vitest y validar cobertura crítica
+        run: npm --prefix frontend-source/frontend run test:ci
+
+      - name: Analizar backend y esperar el quality gate
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        with:
+          projectBaseDir: backend-source
+          args: >-
+            -Dsonar.sources=backend
+            -Dsonar.tests=backend/tests
+            -Dsonar.exclusions=backend/tests/**,backend/node_modules/**,backend/coverage/**,backend/reports/**
+            -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Configurar Node.js para pruebas de API
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.17.1"
+          cache: npm
+          cache-dependency-path: backend-source/backend/package-lock.json
+
+      - name: Iniciar API para Newman
+        run: |
+          mkdir -p backend-source/backend/reports
+          cd backend-source/backend
+          npm start > "$RUNNER_TEMP/task-management-api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/task-management-api.pid"
+
+      - name: Esperar a que la API esté saludable
+        shell: bash
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health > "$RUNNER_TEMP/task-management-health.json"; then
+              cat "$RUNNER_TEMP/task-management-health.json"
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/task-management-api.log"
+          exit 1
+
+      - name: Ejecutar colección API con Newman
+        run: |
+          cd backend-source/backend
+          npx --yes newman@6.2.3 run tests/api/task-management.postman_collection.json \
+            --env-var "baseUrl=http://127.0.0.1:3000" \
+            --reporters cli,json \
+            --reporter-json-export reports/api-tests.json
+
+      - name: Publicar reportes de E10 y E11
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e13-evidence-${{ github.run_number }}
+          path: |
+            backend-source/backend/coverage/
+            backend-source/backend/reports/
+            frontend-source/frontend/coverage/
+            frontend-source/frontend/reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Mostrar log de API si falla el workflow
+        if: failure()
+        run: cat "$RUNNER_TEMP/task-management-api.log"
