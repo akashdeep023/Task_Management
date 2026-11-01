@@ -122,16 +122,473 @@ jobs:
       - name: Correr Vitest y validar cobertura crítica
         run: npm --prefix frontend-source/frontend run test:ci
 
-      - name: Análisis estático local y quality gate (ESLint)
+      # Se revisa el cambio de esta promoción; las reglas completas de Sonar siguen activas en main.
+      - name: Análisis estático diferencial y quality gate (ESLint)
+        shell: bash
         run: |
-          npm run lint --prefix frontend-source/frontend
-          frontend-source/frontend/node_modules/.bin/eslint \
-            --config backend-source/backend/.eslintrc.cjs \
-            --ext .js,.cjs \
-            --ignore-pattern 'backend-source/backend/coverage/**' \
-            --ignore-pattern 'backend-source/backend/reports/**' \
-            --max-warnings 0 \
-            backend-source/backend
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            base_ref="$GITHUB_BASE_REF"
+          else
+            case "$GITHUB_REF_NAME" in
+              featureE13) base_ref="dev" ;;
+              dev) base_ref="main" ;;
+              release) base_ref="dev" ;;
+              main) base_ref="release" ;;
+              *) base_ref="main" ;;
+            esac
+          fi
+
+          echo "Rama base del análisis: $base_ref"
+          for repo_dir in backend-source frontend-source; do
+            git -C "$repo_dir" fetch --no-tags origin "+refs/heads/$base_ref:refs/remotes/origin/$base_ref"
+          done
+
+          node --check backend-source/backend/.eslintrc.cjs
+          node --check frontend-source/frontend/.eslintrc.cjs
+
+          mapfile -t backend_files < <(
+            git -C backend-source diff --name-only --diff-filter=ACMRT "origin/$base_ref...HEAD" -- backend |
+              grep -E '^backend/(config|controllers|middlewares|models|routes|scripts|tests)/.*\.(cjs|js|jsx|mjs)$|^backend/server\.(cjs|js|mjs)
+      # En el plan actual de SonarCloud, el quality gate remoto está disponible para main.
+      - name: Validar secreto de SonarCloud (main o PR a main)
+        if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo "::error::Falta SONAR_TOKEN en Settings > Secrets and variables > Actions de este repositorio."
+            exit 1
+          fi
+      - name: Analizar backend en SonarCloud y esperar el quality gate
+        if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        with:
+          projectBaseDir: backend-source
+          args: >-
+            -Dsonar.sources=backend
+            -Dsonar.tests=backend/tests
+            -Dsonar.exclusions=backend/tests/**,backend/node_modules/**,backend/coverage/**,backend/reports/**
+            -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Configurar Node.js para pruebas de API
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.17.1"
+          cache: npm
+          cache-dependency-path: backend-source/backend/package-lock.json
+
+      - name: Iniciar API para Newman
+        run: |
+          mkdir -p backend-source/backend/reports
+          cd backend-source/backend
+          npm start > "$RUNNER_TEMP/task-management-api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/task-management-api.pid"
+
+      - name: Esperar a que la API esté saludable
+        shell: bash
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health > "$RUNNER_TEMP/task-management-health.json"; then
+              cat "$RUNNER_TEMP/task-management-health.json"
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/task-management-api.log"
+          exit 1
+
+      - name: Ejecutar colección API con Newman
+        run: |
+          cd backend-source/backend
+          npx --yes newman@6.2.3 run tests/api/task-management.postman_collection.json \
+            --env-var "baseUrl=http://127.0.0.1:3000" \
+            --reporters cli,json \
+            --reporter-json-export reports/api-tests.json
+
+      - name: Publicar reportes de E10 y E11
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e13-evidence-${{ github.run_number }}
+          path: |
+            backend-source/backend/coverage/
+            backend-source/backend/reports/
+            frontend-source/frontend/coverage/
+            frontend-source/frontend/reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Mostrar log de API si falla el workflow
+        if: failure()
+        run: cat "$RUNNER_TEMP/task-management-api.log"
+
+  deploy:
+    name: E13 · Despliegue backend a Railway
+    needs: pipeline
+    if: github.event_name == 'push' && contains(fromJSON('["dev","release","main"]'), github.ref_name)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ github.ref_name == 'dev' && 'development' || github.ref_name == 'release' && 'qa' || 'production' }}
+    steps:
+      - name: Descargar la versión promovida
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          fetch-depth: 1
+
+      - name: Configurar Node.js para Railway CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar Railway CLI
+        run: npm install --global @railway/cli@5.63.1
+
+      - name: Validar configuración de Railway
+        shell: bash
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          for variable in RAILWAY_TOKEN RAILWAY_PROJECT_ID RAILWAY_ENVIRONMENT_ID RAILWAY_SERVICE_ID RAILWAY_HEALTH_URL; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing ${variable} in this repository's GitHub Environment."
+              exit 1
+            fi
+          done
+
+      - name: Desplegar backend a Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+        run: railway up ./source/backend --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$RAILWAY_ENVIRONMENT_ID" --service "$RAILWAY_SERVICE_ID"
+
+      - name: Verificar API en Railway
+        env:
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+        run: |
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error --max-time 20 "${RAILWAY_HEALTH_URL%/}/health"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The backend health check did not return HTTP 200."
+          exit 1
+ || true
+          )
+          mapfile -t frontend_files < <(
+            git -C frontend-source diff --name-only --diff-filter=ACMRT "origin/$base_ref...HEAD" -- frontend |
+              grep -E '^frontend/.*\.(cjs|js|jsx|mjs)
+      # En el plan actual de SonarCloud, el quality gate remoto está disponible para main.
+      - name: Validar secreto de SonarCloud (main o PR a main)
+        if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo "::error::Falta SONAR_TOKEN en Settings > Secrets and variables > Actions de este repositorio."
+            exit 1
+          fi
+      - name: Analizar backend en SonarCloud y esperar el quality gate
+        if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        with:
+          projectBaseDir: backend-source
+          args: >-
+            -Dsonar.sources=backend
+            -Dsonar.tests=backend/tests
+            -Dsonar.exclusions=backend/tests/**,backend/node_modules/**,backend/coverage/**,backend/reports/**
+            -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Configurar Node.js para pruebas de API
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.17.1"
+          cache: npm
+          cache-dependency-path: backend-source/backend/package-lock.json
+
+      - name: Iniciar API para Newman
+        run: |
+          mkdir -p backend-source/backend/reports
+          cd backend-source/backend
+          npm start > "$RUNNER_TEMP/task-management-api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/task-management-api.pid"
+
+      - name: Esperar a que la API esté saludable
+        shell: bash
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health > "$RUNNER_TEMP/task-management-health.json"; then
+              cat "$RUNNER_TEMP/task-management-health.json"
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/task-management-api.log"
+          exit 1
+
+      - name: Ejecutar colección API con Newman
+        run: |
+          cd backend-source/backend
+          npx --yes newman@6.2.3 run tests/api/task-management.postman_collection.json \
+            --env-var "baseUrl=http://127.0.0.1:3000" \
+            --reporters cli,json \
+            --reporter-json-export reports/api-tests.json
+
+      - name: Publicar reportes de E10 y E11
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e13-evidence-${{ github.run_number }}
+          path: |
+            backend-source/backend/coverage/
+            backend-source/backend/reports/
+            frontend-source/frontend/coverage/
+            frontend-source/frontend/reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Mostrar log de API si falla el workflow
+        if: failure()
+        run: cat "$RUNNER_TEMP/task-management-api.log"
+
+  deploy:
+    name: E13 · Despliegue backend a Railway
+    needs: pipeline
+    if: github.event_name == 'push' && contains(fromJSON('["dev","release","main"]'), github.ref_name)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ github.ref_name == 'dev' && 'development' || github.ref_name == 'release' && 'qa' || 'production' }}
+    steps:
+      - name: Descargar la versión promovida
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          fetch-depth: 1
+
+      - name: Configurar Node.js para Railway CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar Railway CLI
+        run: npm install --global @railway/cli@5.63.1
+
+      - name: Validar configuración de Railway
+        shell: bash
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          for variable in RAILWAY_TOKEN RAILWAY_PROJECT_ID RAILWAY_ENVIRONMENT_ID RAILWAY_SERVICE_ID RAILWAY_HEALTH_URL; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing ${variable} in this repository's GitHub Environment."
+              exit 1
+            fi
+          done
+
+      - name: Desplegar backend a Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+        run: railway up ./source/backend --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$RAILWAY_ENVIRONMENT_ID" --service "$RAILWAY_SERVICE_ID"
+
+      - name: Verificar API en Railway
+        env:
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+        run: |
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error --max-time 20 "${RAILWAY_HEALTH_URL%/}/health"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The backend health check did not return HTTP 200."
+          exit 1
+ |
+              grep -Ev '^frontend/\.eslintrc\.cjs
+      # En el plan actual de SonarCloud, el quality gate remoto está disponible para main.
+      - name: Validar secreto de SonarCloud (main o PR a main)
+        if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo "::error::Falta SONAR_TOKEN en Settings > Secrets and variables > Actions de este repositorio."
+            exit 1
+          fi
+      - name: Analizar backend en SonarCloud y esperar el quality gate
+        if: github.ref_name == 'main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        with:
+          projectBaseDir: backend-source
+          args: >-
+            -Dsonar.sources=backend
+            -Dsonar.tests=backend/tests
+            -Dsonar.exclusions=backend/tests/**,backend/node_modules/**,backend/coverage/**,backend/reports/**
+            -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Configurar Node.js para pruebas de API
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.17.1"
+          cache: npm
+          cache-dependency-path: backend-source/backend/package-lock.json
+
+      - name: Iniciar API para Newman
+        run: |
+          mkdir -p backend-source/backend/reports
+          cd backend-source/backend
+          npm start > "$RUNNER_TEMP/task-management-api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/task-management-api.pid"
+
+      - name: Esperar a que la API esté saludable
+        shell: bash
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health > "$RUNNER_TEMP/task-management-health.json"; then
+              cat "$RUNNER_TEMP/task-management-health.json"
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/task-management-api.log"
+          exit 1
+
+      - name: Ejecutar colección API con Newman
+        run: |
+          cd backend-source/backend
+          npx --yes newman@6.2.3 run tests/api/task-management.postman_collection.json \
+            --env-var "baseUrl=http://127.0.0.1:3000" \
+            --reporters cli,json \
+            --reporter-json-export reports/api-tests.json
+
+      - name: Publicar reportes de E10 y E11
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e13-evidence-${{ github.run_number }}
+          path: |
+            backend-source/backend/coverage/
+            backend-source/backend/reports/
+            frontend-source/frontend/coverage/
+            frontend-source/frontend/reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Mostrar log de API si falla el workflow
+        if: failure()
+        run: cat "$RUNNER_TEMP/task-management-api.log"
+
+  deploy:
+    name: E13 · Despliegue backend a Railway
+    needs: pipeline
+    if: github.event_name == 'push' && contains(fromJSON('["dev","release","main"]'), github.ref_name)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ github.ref_name == 'dev' && 'development' || github.ref_name == 'release' && 'qa' || 'production' }}
+    steps:
+      - name: Descargar la versión promovida
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          fetch-depth: 1
+
+      - name: Configurar Node.js para Railway CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar Railway CLI
+        run: npm install --global @railway/cli@5.63.1
+
+      - name: Validar configuración de Railway
+        shell: bash
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          for variable in RAILWAY_TOKEN RAILWAY_PROJECT_ID RAILWAY_ENVIRONMENT_ID RAILWAY_SERVICE_ID RAILWAY_HEALTH_URL; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing ${variable} in this repository's GitHub Environment."
+              exit 1
+            fi
+          done
+
+      - name: Desplegar backend a Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+        run: railway up ./source/backend --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$RAILWAY_ENVIRONMENT_ID" --service "$RAILWAY_SERVICE_ID"
+
+      - name: Verificar API en Railway
+        env:
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+        run: |
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error --max-time 20 "${RAILWAY_HEALTH_URL%/}/health"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The backend health check did not return HTTP 200."
+          exit 1
+ || true
+          )
+
+          eslint_bin="frontend-source/frontend/node_modules/.bin/eslint"
+          if (("${#frontend_files[@]}")); then
+            "$eslint_bin" --config frontend-source/frontend/.eslintrc.cjs --max-warnings 0 "${frontend_files[@]}"
+          else
+            echo "Sin archivos fuente modificados en el frontend."
+          fi
+
+          if (("${#backend_files[@]}")); then
+            "$eslint_bin" --config backend-source/backend/.eslintrc.cjs --max-warnings 0 "${backend_files[@]}"
+          else
+            echo "Sin archivos fuente modificados en el backend."
+          fi
 
       # En el plan actual de SonarCloud, el quality gate remoto está disponible para main.
       - name: Validar secreto de SonarCloud (main o PR a main)

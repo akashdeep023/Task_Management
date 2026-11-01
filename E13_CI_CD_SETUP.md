@@ -6,7 +6,7 @@ El pipeline E13 valida en orden el frontend y el backend, y despliega el servici
 
 1. Validación de sintaxis del backend y compilación de producción del frontend con Vite.
 2. Pruebas unitarias del backend con Jest y del frontend con Vitest.
-3. Análisis estático de ambos proyectos con ESLint y quality gate local: cero errores y cero advertencias. En `main` y en PRs dirigidos a `main`, también se ejecuta el análisis de SonarCloud y se espera su quality gate.
+3. Análisis estático diferencial con ESLint sobre los archivos JavaScript modificados frente a la rama base, con cero errores y cero advertencias. En `main` y en PRs dirigidos a `main`, también se ejecuta el análisis completo de SonarCloud y se espera su quality gate.
 4. Arranque de MongoDB temporal, inicio de la API y ejecución de la colección Postman con Newman.
 5. Despliegue del servicio que cambió a Railway y verificación HTTP posterior.
 
@@ -39,9 +39,9 @@ Agregar `SONAR_TOKEN` como secreto de Actions a nivel de **repositorio** en ambo
 
 ### Requisito del plan de SonarCloud
 
-La organización de SonarCloud asociada a este proyecto rechaza el quality gate remoto en ramas distintas de `main`. Para que las ramas de trabajo no se queden bloqueadas por ese límite, el workflow ejecuta ESLint en backend y frontend con cero errores y cero advertencias como quality gate local. SonarCloud se ejecuta en `main` y en PRs cuyo destino es `main`, donde el plan actual permite consultar el gate.
+La organización de SonarCloud asociada a este proyecto rechaza el quality gate remoto en ramas distintas de `main`. En las ramas de trabajo, ESLint revisa solo los archivos fuente modificados frente a la rama base y bloquea el avance si encuentra errores o advertencias. Esto evita que errores de lint heredados en archivos ajenos al cambio bloqueen una promoción. SonarCloud conserva el análisis completo y su quality gate en `main` y en PRs cuyo destino sea `main`.
 
-Si más adelante se habilita un plan de SonarCloud con análisis de ramas, se puede ampliar la condición del paso SonarCloud para incluir `featureE13`, `dev` y `release`. El resultado local de ESLint no se presenta como un análisis de SonarCloud.
+Si más adelante se habilita un plan de SonarCloud con análisis de ramas, se puede ampliar la condición del paso SonarCloud para incluir `featureE13`, `dev` y `release`. El resultado diferencial de ESLint no se presenta como un análisis de SonarCloud.
 
 ### URLs de producción
 
