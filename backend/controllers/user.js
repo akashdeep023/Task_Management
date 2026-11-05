@@ -20,7 +20,7 @@ const updateUser = async (req, res) => {
 		return res.status(400).json({ message: "Invalid profile data" });
 	}
 	if (req.user.email != email) {
-		const existingUser = await User.findOne({ email: email });
+		const existingUser = await User.findOne({ email: String(email) });
 		if (existingUser) {
 			return res.status(400).json({ message: `Email Already Used` });
 		}
