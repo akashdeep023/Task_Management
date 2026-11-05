@@ -29,7 +29,7 @@ test('BE-AUTH-01 registers a new user with a hashed password and token', async (
 test('BE-AUTH-02 rejects a duplicate email without saving or generating a token', async () => {
   User.findOne.mockResolvedValue({ _id: 'existing' });
   const res = response();
-  await registerUser({ body: { email: 'existing@example.com' } }, res);
+  await registerUser({ body: { name: 'Usuario', email: 'existing@example.com', password: 'Test123!' } }, res);
   expect(res.status).toHaveBeenCalledWith(400);
   expect(res.json).toHaveBeenCalledWith({ message: 'User Already Exist' });
   expect(User).not.toHaveBeenCalled();
