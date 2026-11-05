@@ -11,7 +11,7 @@ const registerUser = async (req, res, next) => {
 	if (typeof name !== "string" || !name.trim() || !validEmail(email) || !validPassword(password)) {
 		return res.status(400).json({ message: "Invalid registration data" });
 	}
-	const existingUser = await User.findOne({ email: email });
+	const existingUser = await User.findOne({ email: String(email) });
 	if (existingUser) {
 		return res.status(400).json({ message: `User Already Exist` });
 	}
@@ -34,7 +34,7 @@ const loginUser = async (req, res) => {
 	if (!validEmail(email) || !validPassword(password)) {
 		return res.status(400).json({ message: "Invalid login data" });
 	}
-	let user = await User.findOne({ email: email });
+	let user = await User.findOne({ email: String(email) });
 	if (!user) {
 		return res.status(404).json({ message: `User Not Found` });
 	}
